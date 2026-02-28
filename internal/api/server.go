@@ -125,6 +125,9 @@ func slogRequestLogger(logger *slog.Logger) func(next http.Handler) http.Handler
 }
 
 func spaHandler(staticContent fs.FS, fileServer http.Handler) http.HandlerFunc {
+	// Pre-read index.html to avoid FileServer redirect behavior
+	indexHTML, _ := fs.ReadFile(staticContent, "index.html")
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if len(path) >= 4 {
@@ -132,7 +135,7 @@ func spaHandler(staticContent fs.FS, fileServer http.Handler) http.HandlerFunc {
 		}
 
 		if path == "" || path == "index.html" {
-			serveIndex(w, r, fileServer)
+			serveIndex(w, indexHTML)
 			return
 		}
 
@@ -145,13 +148,14 @@ func spaHandler(staticContent fs.FS, fileServer http.Handler) http.HandlerFunc {
 		}
 
 		// SPA fallback
-		serveIndex(w, r, fileServer)
+		serveIndex(w, indexHTML)
 	}
 }
 
-func serveIndex(w http.ResponseWriter, r *http.Request, fileServer http.Handler) {
-	r2 := cloneRequest(r, "/index.html")
-	fileServer.ServeHTTP(w, r2)
+func serveIndex(w http.ResponseWriter, indexHTML []byte) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(indexHTML)
 }
 
 func cloneRequest(r *http.Request, path string) *http.Request {
