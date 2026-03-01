@@ -108,6 +108,194 @@ func (c *Client) DeleteManifest(ctx context.Context, repo, digest string) error 
 	return nil
 }
 
+// ManifestDigest returns the Docker-Content-Digest for a tag via a HEAD request.
+func (c *Client) ManifestDigest(ctx context.Context, repo, tag string) (string, error) {
+	url := fmt.Sprintf("%s/v2/%s/manifests/%s", c.baseURL, repo, tag)
+
+	req, err := http.NewRequestWithContext(ctx, "HEAD", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", acceptHeader)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HEAD manifest returned status %d", resp.StatusCode)
+	}
+
+	return resp.Header.Get("Docker-Content-Digest"), nil
+}
+
+// TagDigests returns the digest for each tag in a repository, fetched in parallel.
+func (c *Client) TagDigests(ctx context.Context, repo string, tags []string) (map[string]string, error) {
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentFetches)
+
+	type result struct {
+		tag    string
+		digest string
+	}
+	results := make([]result, len(tags))
+
+	for i, tag := range tags {
+		g.Go(func() error {
+			digest, err := c.ManifestDigest(ctx, repo, tag)
+			if err != nil {
+				c.logger.Warn("failed to get digest", "repo", repo, "tag", tag, "error", err)
+				return nil // non-fatal
+			}
+			results[i] = result{tag: tag, digest: digest}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	m := make(map[string]string, len(tags))
+	for _, r := range results {
+		if r.digest != "" {
+			m[r.tag] = r.digest
+		}
+	}
+	return m, nil
+}
+
+// Referrers queries the OCI referrers API for a given manifest digest.
+// Returns nil on 404 (registry doesn't support referrers).
+func (c *Client) Referrers(ctx context.Context, repo, digest string) ([]Referrer, error) {
+	url := fmt.Sprintf("%s/v2/%s/referrers/%s", c.baseURL, repo, digest)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", mediaTypeOCIIndex)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, nil // network error, graceful degradation
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return nil, nil // registry doesn't support referrers
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("referrers returned status %d", resp.StatusCode)
+	}
+
+	var index struct {
+		Manifests []struct {
+			Digest       string `json:"digest"`
+			MediaType    string `json:"mediaType"`
+			ArtifactType string `json:"artifactType"`
+			Size         int64  `json:"size"`
+		} `json:"manifests"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&index); err != nil {
+		return nil, fmt.Errorf("decoding referrers: %w", err)
+	}
+
+	refs := make([]Referrer, len(index.Manifests))
+	for i, m := range index.Manifests {
+		refs[i] = Referrer{
+			Digest:       m.Digest,
+			MediaType:    m.MediaType,
+			ArtifactType: m.ArtifactType,
+			Size:         m.Size,
+		}
+	}
+	return refs, nil
+}
+
+// RegistryStats holds aggregate statistics for the entire registry.
+type RegistryStats struct {
+	TotalRepos int                `json:"totalRepositories"`
+	TotalTags  int                `json:"totalTags"`
+	TopRepos   []RepoTagCount     `json:"topRepositories"`
+}
+
+// RepoTagCount pairs a repo name with its tag count.
+type RepoTagCount struct {
+	Name     string `json:"name"`
+	TagCount int    `json:"tagCount"`
+}
+
+// Stats gathers aggregate stats for the registry.
+func (c *Client) Stats(ctx context.Context) (*RegistryStats, error) {
+	// Fetch all repos
+	var allRepos []Repository
+	last := ""
+	for {
+		page, err := c.Catalog(ctx, 500, last)
+		if err != nil {
+			return nil, fmt.Errorf("fetching catalog for stats: %w", err)
+		}
+		allRepos = append(allRepos, page.Repositories...)
+		if !page.HasMore {
+			break
+		}
+		last = page.LastEntry
+	}
+
+	// Fetch tag counts in parallel
+	type repoTags struct {
+		name  string
+		count int
+	}
+	results := make([]repoTags, len(allRepos))
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentFetches)
+
+	for i, repo := range allRepos {
+		g.Go(func() error {
+			tags, err := c.Tags(ctx, repo.Name)
+			if err != nil {
+				c.logger.Warn("failed to get tags for stats", "repo", repo.Name, "error", err)
+				results[i] = repoTags{name: repo.Name, count: 0}
+				return nil
+			}
+			results[i] = repoTags{name: repo.Name, count: len(tags.Tags)}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	totalTags := 0
+	for _, r := range results {
+		totalTags += r.count
+	}
+
+	// Sort by tag count descending for top repos
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].count > results[j].count
+	})
+
+	top := make([]RepoTagCount, 0, 10)
+	for i := 0; i < len(results) && i < 10; i++ {
+		if results[i].count > 0 {
+			top = append(top, RepoTagCount{Name: results[i].name, TagCount: results[i].count})
+		}
+	}
+
+	return &RegistryStats{
+		TotalRepos: len(allRepos),
+		TotalTags:  totalTags,
+		TopRepos:   top,
+	}, nil
+}
+
 func isManifestList(contentType string) bool {
 	return strings.Contains(contentType, "manifest.list") ||
 		strings.Contains(contentType, "image.index")
@@ -298,8 +486,22 @@ func (c *Client) resolveConfigBlob(ctx context.Context, repo, digest string, m *
 		Variant      string `json:"variant"`
 		Created      string `json:"created"`
 		Config       struct {
-			Env    []string          `json:"Env"`
-			Labels map[string]string `json:"Labels"`
+			Env          []string          `json:"Env"`
+			Labels       map[string]string `json:"Labels"`
+			Entrypoint   []string          `json:"Entrypoint"`
+			Cmd          []string          `json:"Cmd"`
+			WorkingDir   string            `json:"WorkingDir"`
+			User         string            `json:"User"`
+			ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+			Volumes      map[string]struct{} `json:"Volumes"`
+			StopSignal   string            `json:"StopSignal"`
+			Healthcheck  *struct {
+				Test        []string `json:"Test"`
+				Interval    int64    `json:"Interval"`
+				Timeout     int64    `json:"Timeout"`
+				Retries     int      `json:"Retries"`
+				StartPeriod int64    `json:"StartPeriod"`
+			} `json:"Healthcheck"`
 		} `json:"config"`
 		History []struct {
 			Created    string `json:"created"`
@@ -332,6 +534,35 @@ func (c *Client) resolveConfigBlob(ctx context.Context, repo, digest string, m *
 
 	m.Env = blob.Config.Env
 	m.Labels = blob.Config.Labels
+	m.Entrypoint = blob.Config.Entrypoint
+	m.Cmd = blob.Config.Cmd
+	m.WorkingDir = blob.Config.WorkingDir
+	m.User = blob.Config.User
+	m.StopSignal = blob.Config.StopSignal
+
+	if len(blob.Config.ExposedPorts) > 0 {
+		m.ExposedPorts = make([]string, 0, len(blob.Config.ExposedPorts))
+		for port := range blob.Config.ExposedPorts {
+			m.ExposedPorts = append(m.ExposedPorts, port)
+		}
+		sort.Strings(m.ExposedPorts)
+	}
+	if len(blob.Config.Volumes) > 0 {
+		m.Volumes = make([]string, 0, len(blob.Config.Volumes))
+		for vol := range blob.Config.Volumes {
+			m.Volumes = append(m.Volumes, vol)
+		}
+		sort.Strings(m.Volumes)
+	}
+	if blob.Config.Healthcheck != nil {
+		m.Healthcheck = &HealthcheckConfig{
+			Test:        blob.Config.Healthcheck.Test,
+			Interval:    blob.Config.Healthcheck.Interval,
+			Timeout:     blob.Config.Healthcheck.Timeout,
+			Retries:     blob.Config.Healthcheck.Retries,
+			StartPeriod: blob.Config.Healthcheck.StartPeriod,
+		}
+	}
 
 	m.History = make([]HistoryEntry, 0, len(blob.History))
 	for _, h := range blob.History {

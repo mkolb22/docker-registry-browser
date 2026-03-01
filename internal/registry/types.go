@@ -36,16 +36,34 @@ type TagDetail struct {
 
 // Manifest represents a single platform manifest.
 type Manifest struct {
-	Architecture  string         `json:"architecture"`
-	OS            string         `json:"os"`
-	Variant       string         `json:"variant,omitempty"`
-	ContentDigest string         `json:"contentDigest"`
-	Created       *time.Time     `json:"created,omitempty"`
-	Size          int64          `json:"size"`
-	Env           []string       `json:"env,omitempty"`
+	Architecture  string            `json:"architecture"`
+	OS            string            `json:"os"`
+	Variant       string            `json:"variant,omitempty"`
+	ContentDigest string            `json:"contentDigest"`
+	Created       *time.Time        `json:"created,omitempty"`
+	Size          int64             `json:"size"`
+	Env           []string          `json:"env,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
-	History       []HistoryEntry `json:"history,omitempty"`
-	Layers        []Layer        `json:"layers"`
+	History       []HistoryEntry    `json:"history,omitempty"`
+	Layers        []Layer           `json:"layers"`
+	// Runtime config fields
+	Entrypoint   []string          `json:"entrypoint,omitempty"`
+	Cmd          []string          `json:"cmd,omitempty"`
+	WorkingDir   string            `json:"workingDir,omitempty"`
+	User         string            `json:"user,omitempty"`
+	ExposedPorts []string          `json:"exposedPorts,omitempty"`
+	Volumes      []string          `json:"volumes,omitempty"`
+	StopSignal   string            `json:"stopSignal,omitempty"`
+	Healthcheck  *HealthcheckConfig `json:"healthcheck,omitempty"`
+}
+
+// HealthcheckConfig represents a Docker HEALTHCHECK configuration.
+type HealthcheckConfig struct {
+	Test        []string `json:"test"`
+	Interval    int64    `json:"interval,omitempty"`
+	Timeout     int64    `json:"timeout,omitempty"`
+	Retries     int      `json:"retries,omitempty"`
+	StartPeriod int64    `json:"startPeriod,omitempty"`
 }
 
 // DisplayName returns a human-readable name like "linux/amd64" or "linux/arm64/v8".
@@ -88,6 +106,20 @@ func ParseRepository(name string) Repository {
 		return Repository{Name: name, Namespace: parts[0], Image: parts[1]}
 	}
 	return Repository{Name: name, Namespace: "", Image: name}
+}
+
+// Referrer represents an OCI referrer (signature, SBOM, attestation).
+type Referrer struct {
+	Digest       string `json:"digest"`
+	MediaType    string `json:"mediaType"`
+	ArtifactType string `json:"artifactType"`
+	Size         int64  `json:"size"`
+}
+
+// TagDigestInfo holds the digest and creation time for a tag.
+type TagDigestInfo struct {
+	Digest  string     `json:"digest"`
+	Created *time.Time `json:"created,omitempty"`
 }
 
 // formatSize returns a human-readable byte size.

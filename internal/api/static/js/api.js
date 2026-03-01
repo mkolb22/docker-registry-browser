@@ -57,6 +57,18 @@ var API = (function() {
             return request('DELETE', '/tag', { repo: repo, tag: tag });
         },
 
+        getTagDigests: function(repo) {
+            return request('GET', '/tag-digests', { repo: repo });
+        },
+
+        getStats: function() {
+            return request('GET', '/stats');
+        },
+
+        getReferrers: function(repo, digest) {
+            return request('GET', '/referrers', { repo: repo, digest: digest });
+        },
+
         APIError: APIError
     };
 })();

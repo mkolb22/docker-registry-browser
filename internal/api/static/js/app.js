@@ -14,6 +14,7 @@
     // === Router ===
 
     var routes = [
+        { pattern: /^#\/dashboard$/, handler: 'dashboard' },
         { pattern: /^#\/repo\/(.+?)\/tag\/(.+)$/, handler: 'tagDetail' },
         { pattern: /^#\/repo\/(.+)$/, handler: 'repoDetail' },
         { pattern: /^#?\/?$/, handler: 'catalog' }
@@ -33,6 +34,9 @@
     function navigate() {
         var route = getRoute();
         switch (route.handler) {
+            case 'dashboard':
+                loadDashboard();
+                break;
             case 'catalog':
                 loadCatalog();
                 break;
@@ -47,11 +51,27 @@
         }
     }
 
+    // === Page Transition (Proposal 2) ===
+
+    function renderPage(html) {
+        appEl.innerHTML = html;
+        // Trigger stagger animations
+        requestAnimationFrame(function() {
+            var items = appEl.querySelectorAll('.stagger-item');
+            items.forEach(function(el, i) {
+                el.style.animationDelay = (i * 30) + 'ms';
+                el.classList.add('stagger-animate');
+            });
+            var page = appEl.querySelector('.page-enter');
+            if (page) page.classList.add('page-enter-active');
+        });
+    }
+
     // === Pages ===
 
     function loadCatalog(lastEntry) {
         if (!lastEntry) {
-            appEl.innerHTML = Components.loading();
+            appEl.innerHTML = Components.catalogSkeleton();
             state.catalogs = [];
             state.lastEntry = '';
             state.hasMore = false;
@@ -64,7 +84,6 @@
             state.config = results[0];
             var data = results[1];
 
-            // Merge namespaces
             var ns = data.namespaces || {};
             Object.keys(ns).forEach(function(key) {
                 var existing = findNamespace(key);
@@ -78,19 +97,19 @@
             state.hasMore = data.hasMore;
             state.lastEntry = data.lastEntry;
 
-            // Rebuild merged namespaces for render
             var merged = {};
             state.catalogs.forEach(function(c) {
                 merged[c.name] = c.repos;
             });
 
-            appEl.innerHTML = Components.catalogPage(
+            renderPage(Components.catalogPage(
                 { namespaces: merged, hasMore: state.hasMore, lastEntry: state.lastEntry },
                 state.config
-            );
+            ));
 
-            updateHeaderVersion();
+            updateHeader();
             bindCatalogEvents();
+            bindSearchEvents();
         }).catch(handleError);
     }
 
@@ -102,26 +121,50 @@
     }
 
     function loadRepoDetail(repo) {
-        appEl.innerHTML = Components.loading();
+        appEl.innerHTML = Components.repoDetailSkeleton();
 
         var sort = localStorage.getItem('rb-sort') || (state.config && state.config.defaultSortBy) || 'name';
         var order = localStorage.getItem('rb-order') || (state.config && state.config.defaultSortOrder) || 'desc';
 
         Promise.all([
             state.config ? Promise.resolve(state.config) : API.getConfig(),
-            API.listTags(repo, sort, order)
+            API.listTags(repo, sort, order),
+            API.getTagDigests(repo).catch(function() { return { digests: {} }; })
         ]).then(function(results) {
             state.config = results[0];
             var tagData = results[1];
+            var digestData = results[2];
 
-            appEl.innerHTML = Components.repoDetailPage(repo, tagData, state.config);
-            updateHeaderVersion();
+            renderPage(Components.repoDetailPage(repo, tagData, state.config, digestData.digests));
+            updateHeader();
             bindSortEvents(repo);
+            bindSearchEvents();
+            bindCompareEvents(repo);
+
+            // Progressive freshness loading (Proposal 3)
+            loadFreshnessIndicators(repo, tagData.tags);
+        }).catch(handleError);
+    }
+
+    function loadRepoDetailWithSort(repo, sort, order) {
+        appEl.innerHTML = Components.repoDetailSkeleton();
+
+        Promise.all([
+            API.listTags(repo, sort, order),
+            API.getTagDigests(repo).catch(function() { return { digests: {} }; })
+        ]).then(function(results) {
+            var tagData = results[0];
+            var digestData = results[1];
+            renderPage(Components.repoDetailPage(repo, tagData, state.config, digestData.digests));
+            bindSortEvents(repo);
+            bindSearchEvents();
+            bindCompareEvents(repo);
+            loadFreshnessIndicators(repo, tagData.tags);
         }).catch(handleError);
     }
 
     function loadTagDetail(repo, tag) {
-        appEl.innerHTML = Components.loading();
+        appEl.innerHTML = Components.tagDetailSkeleton();
 
         Promise.all([
             state.config ? Promise.resolve(state.config) : API.getConfig(),
@@ -130,10 +173,90 @@
             state.config = results[0];
             var detail = results[1];
 
-            appEl.innerHTML = Components.tagDetailPage(detail, state.config);
-            updateHeaderVersion();
-            bindTagDetailEvents(repo, tag);
+            // Try to fetch referrers (Proposal 14) — non-blocking
+            var referrersPromise = Promise.resolve(null);
+            if (detail.contentDigest) {
+                referrersPromise = API.getReferrers(repo, detail.contentDigest).catch(function() { return null; });
+            }
+
+            return referrersPromise.then(function(refData) {
+                var refs = (refData && refData.referrers) || null;
+                renderPage(Components.tagDetailPage(detail, state.config, refs));
+                updateHeader();
+                bindTagDetailEvents(repo, tag);
+            });
         }).catch(handleError);
+    }
+
+    // === Dashboard (Proposal 12) ===
+
+    function loadDashboard() {
+        appEl.innerHTML = Components.dashboardSkeleton();
+
+        Promise.all([
+            state.config ? Promise.resolve(state.config) : API.getConfig(),
+            API.getStats()
+        ]).then(function(results) {
+            state.config = results[0];
+            var stats = results[1];
+            renderPage(Components.dashboardPage(stats));
+            updateHeader();
+            animateCounters();
+        }).catch(handleError);
+    }
+
+    function animateCounters() {
+        var counters = appEl.querySelectorAll('.stat-value[data-target]');
+        counters.forEach(function(el) {
+            var target = parseFloat(el.getAttribute('data-target'));
+            if (isNaN(target)) return;
+            var start = 0;
+            var duration = 800;
+            var startTime = null;
+            var isFloat = String(target).indexOf('.') >= 0;
+
+            function step(ts) {
+                if (!startTime) startTime = ts;
+                var progress = Math.min((ts - startTime) / duration, 1);
+                var eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+                var current = start + (target - start) * eased;
+                el.textContent = isFloat ? current.toFixed(1) : Math.round(current);
+                if (progress < 1) requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
+        });
+    }
+
+    // === Freshness Indicators (Proposal 3) ===
+
+    function loadFreshnessIndicators(repo, tags) {
+        if (!tags || tags.length === 0) return;
+
+        // Batch fetch — load first 20 tag details progressively
+        var batchSize = 5;
+        var queue = tags.slice(0, 30);
+
+        function processBatch(batch) {
+            var promises = batch.map(function(tag) {
+                return API.getTagDetail(repo, tag).then(function(detail) {
+                    var dot = appEl.querySelector('.freshness-dot[data-tag="' + CSS.escape(tag) + '"]');
+                    if (dot && detail.manifests && detail.manifests[0] && detail.manifests[0].created) {
+                        var cls = Components.freshnessClass(detail.manifests[0].created);
+                        dot.className = 'freshness-dot ' + cls;
+                        dot.title = Components.relativeTime(detail.manifests[0].created);
+                    }
+                }).catch(function() {});
+            });
+            return Promise.all(promises);
+        }
+
+        function processQueue() {
+            if (queue.length === 0) return;
+            var batch = queue.splice(0, batchSize);
+            processBatch(batch).then(processQueue);
+        }
+
+        processQueue();
     }
 
     // === Event Binding ===
@@ -147,6 +270,39 @@
                 loadCatalog(state.lastEntry);
             });
         }
+    }
+
+    // === Search/Filter (Proposal 4) ===
+
+    function bindSearchEvents() {
+        var input = appEl.querySelector('.search-input');
+        if (!input) return;
+
+        input.addEventListener('input', function() {
+            var query = input.value.toLowerCase().trim();
+            var items = appEl.querySelectorAll('.filterable');
+            items.forEach(function(el) {
+                var name = (el.getAttribute('data-name') || '').toLowerCase();
+                if (!query || name.indexOf(query) >= 0) {
+                    el.classList.remove('filtered-out');
+                    // Highlight matching text
+                    var nameEl = el.querySelector('.repo-name, .tag-name');
+                    if (nameEl && query) {
+                        var original = el.getAttribute('data-name');
+                        var idx = original.toLowerCase().indexOf(query);
+                        if (idx >= 0) {
+                            nameEl.innerHTML = Components.esc(original.substring(0, idx)) +
+                                '<mark>' + Components.esc(original.substring(idx, idx + query.length)) + '</mark>' +
+                                Components.esc(original.substring(idx + query.length));
+                        }
+                    } else if (nameEl) {
+                        nameEl.textContent = el.getAttribute('data-name');
+                    }
+                } else {
+                    el.classList.add('filtered-out');
+                }
+            });
+        });
     }
 
     function bindSortEvents(repo) {
@@ -165,13 +321,32 @@
         if (sortOrder) sortOrder.addEventListener('change', onSortChange);
     }
 
-    function loadRepoDetailWithSort(repo, sort, order) {
-        appEl.innerHTML = Components.loading();
+    // === Compare Events (Proposal 11) ===
 
-        API.listTags(repo, sort, order).then(function(tagData) {
-            appEl.innerHTML = Components.repoDetailPage(repo, tagData, state.config);
-            bindSortEvents(repo);
-        }).catch(handleError);
+    function bindCompareEvents(repo) {
+        var btn = document.getElementById('compare-btn');
+        if (!btn) return;
+
+        btn.addEventListener('click', function() {
+            var tagA = document.getElementById('compare-a').value;
+            var tagB = document.getElementById('compare-b').value;
+            if (tagA === tagB) {
+                toast('Select two different tags', 'error');
+                return;
+            }
+
+            var resultEl = document.getElementById('compare-result');
+            resultEl.innerHTML = '<div class="loading-container" style="padding:20px"><div class="spinner"></div></div>';
+
+            Promise.all([
+                API.getTagDetail(repo, tagA),
+                API.getTagDetail(repo, tagB)
+            ]).then(function(results) {
+                resultEl.innerHTML = Components.compareResult(tagA, results[0], tagB, results[1]);
+            }).catch(function(err) {
+                resultEl.innerHTML = '<p class="text-danger">Comparison failed: ' + Components.esc(err.message) + '</p>';
+            });
+        });
     }
 
     function bindTagDetailEvents(repo, tag) {
@@ -185,24 +360,49 @@
                 appEl.querySelectorAll('.manifest-panel').forEach(function(p) {
                     p.style.display = p.getAttribute('data-panel') === idx ? '' : 'none';
                 });
+                // Update constellation active state
+                appEl.querySelectorAll('.constellation-node').forEach(function(n) {
+                    n.classList.toggle('active', n.getAttribute('data-tab') === idx);
+                });
             });
         });
 
-        // Section collapsing
-        appEl.querySelectorAll('.section-header').forEach(function(header) {
-            header.addEventListener('click', function() {
-                header.classList.toggle('collapsed');
-                var body = header.nextElementSibling;
-                if (body) body.classList.toggle('collapsed');
+        // Constellation node clicks (Proposal 10)
+        appEl.querySelectorAll('.constellation-node').forEach(function(node) {
+            node.addEventListener('click', function() {
+                var idx = node.getAttribute('data-tab');
+                // Trigger corresponding tab
+                var tab = appEl.querySelector('.tab[data-tab="' + idx + '"]');
+                if (tab) tab.click();
             });
+            node.style.cursor = 'pointer';
         });
 
-        // Copy button
+        // Copy button with animation (Proposal 6)
         appEl.querySelectorAll('.copy-btn').forEach(function(btn) {
             btn.addEventListener('click', function() {
                 var text = btn.getAttribute('data-copy');
                 navigator.clipboard.writeText(text).then(function() {
-                    toast('Copied to clipboard', 'success');
+                    btn.classList.add('copied');
+                    btn.textContent = 'Copied!';
+                    setTimeout(function() {
+                        btn.classList.remove('copied');
+                        btn.textContent = 'Copy';
+                    }, 1500);
+                });
+            });
+        });
+
+        // Layer bar hover highlight
+        appEl.querySelectorAll('.layer-bar-seg').forEach(function(seg) {
+            seg.addEventListener('mouseenter', function() {
+                var idx = seg.getAttribute('data-layer');
+                var info = appEl.querySelectorAll('.layer-info')[idx];
+                if (info) info.classList.add('layer-highlight');
+            });
+            seg.addEventListener('mouseleave', function() {
+                appEl.querySelectorAll('.layer-info').forEach(function(el) {
+                    el.classList.remove('layer-highlight');
                 });
             });
         });
@@ -275,16 +475,20 @@
 
     // === Helpers ===
 
-    function updateHeaderVersion() {
-        if (state.config && state.config.version) {
-            headerActions.innerHTML = '<span class="header-version">v' + Components.esc(state.config.version) + '</span>';
+    function updateHeader() {
+        if (!state.config) return;
+        var html = '';
+        if (state.config.version) {
+            html += '<span class="header-version">v' + Components.esc(state.config.version) + '</span>';
         }
+        html += '<a href="#/dashboard" class="header-dashboard-link" title="Dashboard">Dashboard</a>';
+        headerActions.innerHTML = html;
     }
 
     function handleError(err) {
         console.error(err);
-        appEl.innerHTML = Components.emptyState('\u26A0\uFE0F',
-            'Error: ' + (err.message || 'Unknown error'));
+        renderPage('<div class="page-enter">' + Components.emptyState('\u26A0\uFE0F',
+            'Error: ' + (err.message || 'Unknown error')) + '</div>');
         toast(err.message || 'An error occurred', 'error');
     }
 

@@ -57,6 +57,9 @@ func NewServer(addr string, deps ServerDeps) *Server {
 		r.Get("/tags", h.ListTags)
 		r.Get("/tag", h.GetTagDetail)
 		r.Delete("/tag", h.DeleteTag)
+		r.Get("/tag-digests", h.GetTagDigests)
+		r.Get("/stats", h.GetStats)
+		r.Get("/referrers", h.GetReferrers)
 	})
 
 	// SPA
