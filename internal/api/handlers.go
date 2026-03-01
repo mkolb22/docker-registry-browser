@@ -103,6 +103,68 @@ func (h *Handler) GetTagDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
+func (h *Handler) GetTagDigests(w http.ResponseWriter, r *http.Request) {
+	repo := queryString(r, "repo", "")
+	if repo == "" {
+		writeError(w, http.StatusBadRequest, "repo query parameter required", CodeBadRequest)
+		return
+	}
+
+	tagList, err := h.client.Tags(r.Context(), repo)
+	if err != nil {
+		h.logger.Error("listing tags for digests", "repo", repo, "error", err)
+		writeError(w, http.StatusBadGateway, "failed to list tags: "+err.Error(), CodeInternalError)
+		return
+	}
+
+	digests, err := h.client.TagDigests(r.Context(), repo, tagList.Tags)
+	if err != nil {
+		h.logger.Error("getting tag digests", "repo", repo, "error", err)
+		writeError(w, http.StatusBadGateway, "failed to get digests: "+err.Error(), CodeInternalError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, TagDigestsResponse{
+		Repository: repo,
+		Digests:    digests,
+	})
+}
+
+func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.client.Stats(r.Context())
+	if err != nil {
+		h.logger.Error("getting stats", "error", err)
+		writeError(w, http.StatusBadGateway, "failed to get stats: "+err.Error(), CodeInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (h *Handler) GetReferrers(w http.ResponseWriter, r *http.Request) {
+	repo := queryString(r, "repo", "")
+	digest := queryString(r, "digest", "")
+	if repo == "" || digest == "" {
+		writeError(w, http.StatusBadRequest, "repo and digest query parameters required", CodeBadRequest)
+		return
+	}
+
+	refs, err := h.client.Referrers(r.Context(), repo, digest)
+	if err != nil {
+		h.logger.Error("getting referrers", "repo", repo, "digest", digest, "error", err)
+		writeError(w, http.StatusBadGateway, "failed to get referrers: "+err.Error(), CodeInternalError)
+		return
+	}
+	if refs == nil {
+		refs = []registry.Referrer{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"repository": repo,
+		"digest":     digest,
+		"referrers":  refs,
+	})
+}
+
 func (h *Handler) DeleteTag(w http.ResponseWriter, r *http.Request) {
 	if !h.config.DeleteEnabled {
 		writeError(w, http.StatusForbidden, "image deletion is disabled", CodeForbidden)

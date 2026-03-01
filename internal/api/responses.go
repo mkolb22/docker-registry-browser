@@ -44,6 +44,11 @@ type TagListResponse struct {
 	Order      string   `json:"order"`
 }
 
+type TagDigestsResponse struct {
+	Repository string            `json:"repository"`
+	Digests    map[string]string `json:"digests"`
+}
+
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

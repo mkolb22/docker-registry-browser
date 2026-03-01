@@ -10,6 +10,16 @@
     <link rel="stylesheet" href="/ui/css/style.css">
 </head>
 <body>
+    <!-- Glassmorphism gradient background (Proposal 8) -->
+    <div class="gradient-bg" aria-hidden="true">
+        <div class="gradient-orb gradient-orb-1"></div>
+        <div class="gradient-orb gradient-orb-2"></div>
+        <div class="gradient-orb gradient-orb-3"></div>
+    </div>
+
+    <!-- Particle network canvas (Proposal 15) -->
+    <canvas id="particle-canvas" aria-hidden="true"></canvas>
+
     <header class="header">
         <div class="header-inner">
             <a href="#/" class="header-brand">
@@ -38,5 +48,6 @@
     <script src="/ui/js/api.js"></script>
     <script src="/ui/js/components.js"></script>
     <script src="/ui/js/app.js"></script>
+    <script src="/ui/js/particles.js"></script>
 </body>
 </html>
