@@ -195,7 +195,19 @@ a:hover { color: var(--color-accent-hover); }
     color: var(--text-primary);
     width: 100%;
 }
-.repo-icon { color: var(--color-repo); font-size: 14px; }
+.badge-img {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: var(--color-repo);
+    color: #fff;
+    flex-shrink: 0;
+}
 .repo-name { font-family: var(--font-mono); font-size: 14px; }
 .repo-arrow { margin-left: auto; color: var(--text-secondary); font-size: 12px; }
 
@@ -218,7 +230,19 @@ a:hover { color: var(--color-accent-hover); }
     color: var(--text-primary);
     width: 100%;
 }
-.tag-icon { color: var(--color-tag); font-size: 14px; }
+.badge-tag-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: var(--color-tag);
+    color: #fff;
+    flex-shrink: 0;
+}
 .tag-name { font-family: var(--font-mono); font-size: 14px; }
 .tag-arrow { margin-left: auto; color: var(--text-secondary); font-size: 12px; }
 
@@ -418,10 +442,10 @@ a:hover { color: var(--color-accent-hover); }
 .layer-list { list-style: none; }
 .layer-item {
     display: grid;
-    grid-template-columns: 40px 1fr auto;
+    grid-template-columns: 30px 1fr auto;
     align-items: center;
-    gap: 12px;
-    padding: 8px 16px;
+    gap: 16px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border-primary);
     font-size: 13px;
 }
@@ -430,26 +454,29 @@ a:hover { color: var(--color-accent-hover); }
     color: var(--text-secondary);
     font-family: var(--font-mono);
     text-align: right;
+    font-size: 13px;
 }
 .layer-bar-container {
-    height: 6px;
+    height: 4px;
     background: var(--bg-tertiary);
-    border-radius: 3px;
+    border-radius: 2px;
     overflow: hidden;
+    position: relative;
 }
 .layer-bar {
     height: 100%;
-    background: var(--color-accent);
-    border-radius: 3px;
-    min-width: 2px;
+    background: #4a90d9;
+    border-radius: 2px;
+    min-width: 3px;
     transition: width 0.3s ease;
 }
 .layer-size {
     font-family: var(--font-mono);
     color: var(--text-secondary);
     white-space: nowrap;
-    min-width: 70px;
+    min-width: 80px;
     text-align: right;
+    font-size: 13px;
 }
 
 /* === History === */

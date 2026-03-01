@@ -120,7 +120,7 @@ var Components = (function() {
 
     function repoRow(repo) {
         return '<li class="repo-item"><a href="#/repo/' + encodeURIComponent(repo.name) + '">' +
-               '<span class="repo-icon">\u{1F4E6}</span>' +
+               '<span class="badge-img">IMG</span>' +
                '<span class="repo-name">' + esc(repo.name) + '</span>' +
                '<span class="repo-arrow">\u{203A}</span>' +
                '</a></li>';
@@ -170,7 +170,7 @@ var Components = (function() {
 
     function tagRow(repo, tag) {
         return '<li class="tag-item"><a href="#/repo/' + encodeURIComponent(repo) + '/tag/' + encodeURIComponent(tag) + '">' +
-               '<span class="tag-icon">\uD83C\uDFF7\uFE0F</span>' +
+               '<span class="badge-tag-icon">TAG</span>' +
                '<span class="tag-name">' + esc(tag) + '</span>' +
                '<span class="tag-arrow">\u{203A}</span>' +
                '</a></li>';
@@ -331,7 +331,7 @@ var Components = (function() {
                '<span class="toggle">\u25BC</span> Layers (' + layers.length + ')</div>' +
                '<div class="section-body"><ul class="layer-list">' +
                layers.map(function(l) {
-                   var pct = maxSize > 0 ? Math.max(2, (l.size / maxSize) * 100) : 2;
+                   var pct = maxSize > 0 ? Math.max(1, (l.size / maxSize) * 100) : 1;
                    return '<li class="layer-item">' +
                           '<span class="layer-index">' + l.index + '</span>' +
                           '<div class="layer-bar-container"><div class="layer-bar" style="width:' + pct.toFixed(1) + '%"></div></div>' +
