@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "@dragonflymcp/plugin": "file:../dragonfly-plugin"
+  }
+}
