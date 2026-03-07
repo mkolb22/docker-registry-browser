@@ -27,3 +27,11 @@ Thumbs.db
 
 # Build
 dist/
+
+# Node / Dragonfly plugin
+node_modules/
+package.json
+package-lock.json
+
+# Dragonfly runtime data
+data/
